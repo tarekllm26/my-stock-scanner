@@ -3,105 +3,93 @@ import finnhub
 import pandas as pd
 import time
 
-# --- INITIAL SETUP ---
-API_KEY = 'd5j4d59r01qh37ui8e10d5j4d59r01qh37ui8e1g' # Replace with your actual key
-finnhub_client = finnhub.Client(api_key=d5j4d59r01qh37ui8e10d5j4d59r01qh37ui8e1g)
+# --- CONFIG ---
+API_KEY = 'd5j4d59r01qh37ui8e10d5j4d59r01qh37ui8e1g'
+finnhub_client = finnhub.Client(api_key=API_KEY)
 
-# --- SHARIA & FINANCIAL FILTERS ---
-def check_sharia_compliance(symbol):
-    try:
-        # Fetch fundamental data
-        fundamentals = finnhub_client.company_basic_financials(symbol, 'all')
-        metrics = fundamentals.get('metric', {})
-        
-        # 1. Get Debt and Market Cap
-        total_debt = metrics.get('totalDebtAnnual', 0)
-        market_cap = metrics.get('marketCapitalization', 0)
-        
-        if market_cap == 0: return False, 0
-        
-        # 2. Calculate Ratio (Debt to Market Cap)
-        debt_ratio = (total_debt / market_cap) * 100
-        
-        # 3. Rule: Debt must be < 33.3%
-        is_compliant = debt_ratio < 33.3
-        return is_compliant, round(debt_ratio, 2)
-    except Exception:
-        return False, 0
+# --- MASTER SECTOR WATCHLIST ---
+# We use a focused list to ensure we don't hit the 60-call limit too fast
+SECTOR_WATCHLIST = {
+    "Technology": ['AMD', 'NVDA', 'PLTR', 'SNOW', 'ROKU', 'AMD', 'INTC', 'MU', 'ARM', 'TSM'],
+    "Energy": ['XOM', 'CVX', 'HAL', 'SLB', 'OXY', 'FSLR', 'ENPH', 'RUN', 'VLO', 'MPC'],
+    "Healthcare/Pharma": ['PFE', 'MRNA', 'BIIB', 'VRTX', 'GILD', 'AMGN', 'JNJ', 'ABBV', 'LLY', 'BMY']
+}
 
 def get_stock_data(symbol):
     try:
-        profile = finnhub_client.company_profile2(symbol=symbol)
+        # 1. Get Quote & Profile (2 calls)
         quote = finnhub_client.quote(symbol)
+        profile = finnhub_client.company_profile2(symbol=symbol)
         
-        sector = profile.get('finnhubIndustry', 'N/A')
-        allowed_sectors = ['Health', 'Life Sciences', 'Energy', 'Technology', 'Pharmaceuticals']
         price = quote['c']
+        change = quote['dp']
         
-        # Sector and Price Filter ($0.5 - $80)
-        if any(s in sector for s in allowed_sectors) and (0.5 <= price <= 80):
-            # Live Sharia Check
-            is_sharia, d_ratio = check_sharia_compliance(symbol)
+        # Filter Price Range
+        if not (0.5 <= price <= 80):
+            return None
             
-            if is_sharia:
-                return {
-                    "Ticker": symbol,
-                    "Sector": sector,
-                    "Price": price,
-                    "Debt Ratio": f"{d_ratio}%",
-                    "Change %": quote['dp'],
-                    "High": quote['h'],
-                    "Low": quote['l']
-                }
+        # 2. Sharia Check (1 call)
+        fundamentals = finnhub_client.company_basic_financials(symbol, 'all')
+        metrics = fundamentals.get('metric', {})
+        debt = metrics.get('totalDebtAnnual', 0)
+        mcap = metrics.get('marketCapitalization', 0)
+        debt_ratio = (debt / mcap) * 100 if mcap > 0 else 999
+        
+        if debt_ratio < 33.3:
+            return {
+                "Ticker": symbol,
+                "Sector": profile.get('finnhubIndustry', 'N/A'),
+                "Price": price,
+                "Change %": change,
+                "Debt Ratio": f"{round(debt_ratio, 1)}%",
+                "Entry": price,
+                "Stop": round(price * 0.98, 2),
+                "Target": round(price * 1.05, 2)
+            }
     except:
         return None
-    return None
 
-# --- STRATEGY CALCULATIONS ---
-def get_levels(price, strategy_type):
-    if strategy_type == "Ross":
-        stop = price * 0.97  # 3% stop
-        tp = price * 1.10    # 10% target
-    else:
-        stop = price * 0.985 # 1.5% stop
-        tp = price * 1.04    # 4% target
-    return round(price, 2), round(stop, 2), round(target, 2)
+# --- UI SETUP ---
+st.set_page_config(page_title="Sector Strategy Scanner", layout="wide")
+st.title("📊 Top 10 Sector-Based Strategy Scanner")
 
-# --- MULTI-PAGE UI ---
-st.set_page_config(page_title="Islamic Day Trading Scanner", layout="wide")
-st.sidebar.title("Trading Strategies")
-page = st.sidebar.radio("Select Strategy", ["Andrew Aziz", "Ross Cameron", "Martin Luk"])
+strategy = st.sidebar.selectbox("Select Strategy", ["Andrew Aziz", "Ross Cameron", "Martin Luk"])
+st.sidebar.info(f"Currently scanning {strategy} criteria...")
 
-st.title(f"🔍 {page} Strategy Scanner")
-st.info("Filtering: $0.5-$80 | Sharia Compliant (Debt < 33%) | Energy, Tech, Health, Pharma")
+# --- PROCESSING ---
+all_results = []
+with st.spinner("Checking Sector Watchlists..."):
+    for sector, symbols in SECTOR_WATCHLIST.items():
+        for sym in symbols:
+            data = get_stock_data(sym)
+            if data:
+                all_results.append(data)
 
-# Add more symbols relevant to your sectors here
-SYMBOLS = ['AMD', 'NVDA', 'PFE', 'XOM', 'MRNA', 'AMD', 'FSLR', 'ENPH', 'BIIB', 'HAL', 'SLB']
-
-results = []
-with st.spinner('Scanning Market Data...'):
-    for sym in SYMBOLS:
-        data = get_stock_data(sym)
-        if data:
-            # Apply Strategy-Specific Technical Filters
-            if page == "Andrew Aziz" and abs(data['Change %']) > 2:
-                results.append(data)
-            elif page == "Ross Cameron" and data['Change %'] > 4:
-                results.append(data)
-            elif page == "Martin Luk" and abs(data['Change %']) > 1:
-                results.append(data)
-
-# Show Results
-if results:
-    df = pd.DataFrame(results).sort_values(by="Change %", ascending=False).head(10)
-    # Add Entry/Exit Columns
-    df['Entry'] = df['Price']
-    df['Stop Loss'] = df['Price'].apply(lambda x: round(x * 0.98, 2))
-    df['Take Profit'] = df['Price'].apply(lambda x: round(x * 1.05, 2))
+# --- APPLY STRATEGY FILTERS ---
+if all_results:
+    df = pd.DataFrame(all_results)
     
-    st.table(df[['Ticker', 'Sector', 'Debt Ratio', 'Price', 'Entry', 'Stop Loss', 'Take Profit']])
-else:
-    st.warning("No stocks currently match all criteria. The markets might be quiet or symbols are non-compliant.")
+    # Filter based on strategy rules
+    if strategy == "Ross Cameron":
+        # High momentum / Gappers
+        df = df[df['Change %'] > 3]
+    elif strategy == "Andrew Aziz":
+        # Strong intraday moves
+        df = df[abs(df['Change %']) > 2]
+    
+    # Sort by performance and take top 10
+    top_10 = df.sort_values(by="Change %", ascending=False).head(10)
 
+    # --- DISPLAY ---
+    if not top_10.empty:
+        st.subheader(f"Top 10 Halal Matches for {strategy}")
+        st.table(top_10[['Ticker', 'Sector', 'Price', 'Change %', 'Debt Ratio', 'Entry', 'Stop', 'Target']])
+    else:
+        st.warning("No stocks currently meet the strategy's % change criteria.")
+else:
+    st.error("No stocks found matching the Sector/Price/Sharia filters.")
+
+# --- AUTO-REFRESH ---
+st.caption("Auto-refreshing every 60 seconds...")
 time.sleep(60)
 st.rerun()
