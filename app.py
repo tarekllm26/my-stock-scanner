@@ -4,8 +4,8 @@ import pandas as pd
 import time
 
 # --- INITIAL SETUP ---
-API_KEY = 'YOUR_API_KEY' # Replace with your actual key
-finnhub_client = finnhub.Client(api_key=API_KEY)
+API_KEY = 'd5j4d59r01qh37ui8e10d5j4d59r01qh37ui8e1g' # Replace with your actual key
+finnhub_client = finnhub.Client(api_key=d5j4d59r01qh37ui8e10d5j4d59r01qh37ui8e1g)
 
 # --- SHARIA & FINANCIAL FILTERS ---
 def check_sharia_compliance(symbol):
